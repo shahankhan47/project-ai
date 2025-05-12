@@ -68,7 +68,7 @@ class AsyncRateLimiter:
  
  
  
-rate_limiter = AsyncRateLimiter(40)
+rate_limiter = AsyncRateLimiter(150)
 
 
 
@@ -101,7 +101,7 @@ async def update_vectors (project_id: str, full_summaries: list , action: None):
     for full_summary in full_summaries:
 
         file_name, file_path, content, summary = full_summary
-        truncated_content = await open_ai_truncator(text= content, model= "text-embedding-3-large" , max_tokens= 6500)
+        truncated_content = await open_ai_truncator(text= content, model= "text-embedding-3-large" , max_tokens= 5500)
         
         # Create the document with the required sections
         document = f"File Path: {file_path}\n\nSummary:\n{summary}\nContent:\n{truncated_content}"
@@ -269,7 +269,7 @@ async def generate_executive_summary(summary: str) -> Dict[str, str]:
     }
     
     retry_attempts = 5
-    initial_delay = 10  # Initial delay in seconds
+    initial_delay = 1  # Initial delay in seconds
 
     # Initialize a dictionary to store responses
     responses = {}

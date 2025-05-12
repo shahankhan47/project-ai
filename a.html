@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Cabin Management in The Wild Oasis React Application</title>
+    </head>
+    <body>
+        <p>
+            Certainly! Below is a detailed, structured, and implementation-ready
+            explanation of the <strong>cabin management</strong> features in
+            this React hotel management application. It covers all relevant
+            components, hooks, services, and how they interrelate to provide a
+            cohesive cabin management system.
+        </p>
+
+        <hr />
+
+        <h1>Cabin Management in The Wild Oasis React Application</h1>
+
+        <p>
+            Cabin management encompasses listing, creating, editing,
+            duplicating, deleting cabins, and handling their related data such
+            as images, pricing, capacity, and discounts. This system interacts
+            closely with the backend Supabase service for data persistence and
+            image storage.
+        </p>
+
+        <hr />
+
+        <h2>1. Components</h2>
+
+        <h3>1.1 <code>Cabins.jsx</code> (Page Component)</h3>
+        <ul>
+            <li>
+                <strong>Purpose</strong>: Serves as the main cabin management
+                page rendering all components related to cabin display and
+                creation.
+            </li>
+            <li>
+                <strong>Functionality</strong>:
+                <ul>
+                    <li>Displays a heading "All cabins".</li>
+                    <li>
+                        Includes operational UI for filtering and sorting via
+                        <code>CabinTableOperations</code>.
+                    </li>
+                    <li>
+                        Shows the cabin list table via <code>CabinTable</code>.
+                    </li>
+                    <li>
+                        Provides a form/modal to add new cabins via
+                        <code>AddCabin</code>.
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <strong>Imports</strong>:
+                <ul>
+                    <li><code>Heading</code> (UI heading)</li>
+                    <li><code>Row</code> (layout component)</li>
+                    <li>
+                        <code>CabinTable</code>,
+                        <code>CabinTableOperations</code>,
+                        <code>AddCabin</code> (features/cabins)
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <strong>Example Render</strong>:
+                <pre><code class="language-jsx">&lt;Row type="horizontal"&gt;
+    &lt;Heading as="h1"&gt;All cabins&lt;/Heading&gt;
+    &lt;CabinTableOperations /&gt;
+&lt;/Row&gt;
+&lt;Row&gt;
+    &lt;CabinTable /&gt;
+    &lt;AddCabin /&gt;
+&lt;/Row&gt;
+</code></pre>
+            </li>
+        </ul>
+
+        <hr />
+
+        <h3>1.2 <code>CabinTable.jsx</code></h3>
+        <ul>
+            <li>
+                <strong>Purpose</strong>: Displays a sortable, filterable table
+                of cabins.
+            </li>
+            <li>
+                <strong>Functionality</strong>:
+                <ul>
+                    <li>
+                        Fetches cabin data from the <code>useCabins</code> hook.
+                    </li>
+                    <li>
+                        Applies filtering based on discount status (all, with
+                        discount, no discount) using URL search params.
+                    </li>
+                    <li>
+                        Sorts cabins by fields (e.g., name, price) ascending or
+                        descending also based on URL params.
+                    </li>
+                    <li>
+                        Renders a table header and a body with rows for each
+                        cabin.
+                    </li>
+                    <li>Shows loading spinner or empty state if needed.</li>
+                </ul>
+            </li>
+            <li>
+                <strong>Dependencies</strong>:
+                <ul>
+                    <li><code>useCabins</code> (data fetching)</li>
+                    <li>
+                        UI Components: <code>Spinner</code>, <code>Table</code>,
+                        <code>Menus</code>, <code>CabinRow</code>
+                    </li>
+                    <li>
+                        React Router’s <code>useSearchParams</code> for
+                        filtering and sorting state.
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <strong>Key Logic</strong>:
+                <pre><code class="language-js">// Filter cabins array:
+if(filterValue === "with-discount") filteredCabins = cabins.filter(c =&gt; c.discount &gt; 0);
+</code></pre>
+                <pre><code class="language-js">// Sort cabins array:
+const modifier = direction === "asc" ? 1 : -1;
+cabins.sort((a,b) =&gt; (a[field] - b[field]) * modifier);
+</code></pre>
+            </li>
+            <li>
+                <strong>Usage</strong>: Embedded in <code>Cabins.jsx</code>.
+            </li>
+        </ul>
+
+        <hr />
+
+        <h3>
+            1.3 <code>CabinRow.jsx</code> (also <code>CabinRow-v1.jsx</code>)
+        </h3>
+        <ul>
+            <li>
+                <strong>Purpose</strong>: Represents a single row in the cabins
+                table showing cabin details and controls.
+            </li>
+            <li>
+                <strong>Functionality</strong>:
+                <ul>
+                    <li>
+                        Displays cabin image, name, capacity, regular price,
+                        discount.
+                    </li>
+                    <li>
+                        Provides buttons/menu actions for:
+                        <ul>
+                            <li>
+                                Duplicate cabin (creates a new cabin with copied
+                                data and prefixed name).
+                            </li>
+                            <li>
+                                Edit cabin (opens a modal with
+                                <code>CreateCabinForm</code> to edit data).
+                            </li>
+                            <li>
+                                Delete cabin (opens a confirm modal to delete
+                                cabin).
+                            </li>
+                        </ul>
+                    </li>
+                    <li>
+                        Manages async states like <code>isCreating</code> and
+                        <code>isDeleting</code> using custom hooks.
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <strong>Hooks Used</strong>:
+                <ul>
+                    <li><code>useDeleteCabin</code> for deletion.</li>
+                    <li><code>useCreateCabin</code> for duplication.</li>
+                </ul>
+            </li>
+            <li>
+                <strong>UI</strong>:
+                <ul>
+                    <li>Uses <code>styled-components</code> for styling.</li>
+                    <li>
+                        Utilizes icon buttons for actions
+                        (<code>HiPencil</code>, <code>HiSquare2Stack</code>,
+                        <code>HiTrash</code>).
+                    </li>
+                    <li>Modals for confirm delete and edit form.</li>
+                    <li>
+                        Uses <code>Menus</code> component for dropdown action
+                        menu.
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <strong>Example of Duplication Handler</strong>:
+                <pre><code class="language-js">function handleDuplicate() {
+    createCabin({
+        name: `Copy of ${name}`,
+        maxCapacity,
+        regularPrice,
+        image,
+        discount,
+        description,
+    });
+}
+</code></pre>
+            </li>
+            <li>
+                <strong>Considerations</strong>:
+                <ul>
+                    <li>
+                        Handles state to disable buttons while creating or
+                        deleting.
+                    </li>
+                    <li>
+                        Uses <code>formatCurrency</code> helper for price
+                        formatting.
+                    </li>
+                </ul>
+            </li>
+        </ul>
+
+        <hr />
+
+        <h3>1.4 <code>AddCabin.jsx</code></h3>
+        <ul>
+            <li>
+                <strong>Purpose</strong>: Provides modal/dialog to create a new
+                cabin.
+            </li>
+            <li>
+                <strong>Functionality</strong>:
+                <ul>
+                    <li>Wraps <code>CreateCabinForm</code> inside a modal.</li>
+                    <li>Opens/closes modal on user action.</li>
+                </ul>
+            </li>
+            <li>
+                <strong>Note</strong>: Implements a compound component pattern
+                to allow flexible modal interaction.
+            </li>
+        </ul>
+
+        <hr />
+
+        <h3>
+            1.5 <code>CreateCabinForm.jsx</code> (also
+            <code>CreateCabinForm-v1.jsx</code>)
+        </h3>
+        <ul>
+            <li>
+                <strong>Purpose</strong>: Form component to create or edit cabin
+                details.
+            </li>
+            <li>
+                <strong>Functionality</strong>:
+                <ul>
+                    <li>
+                        Uses <code>react-hook-form</code> for controlled form
+                        inputs and validation.
+                    </li>
+                    <li>
+                        Input fields include:
+                        <ul>
+                            <li>Cabin name (text)</li>
+                            <li>Capacity (number)</li>
+                            <li>Price (number)</li>
+                            <li>Discount (number)</li>
+                            <li>Description (textarea)</li>
+                            <li>Photo/File upload input</li>
+                        </ul>
+                    </li>
+                    <li>Validates inputs based on form schema.</li>
+                    <li>
+                        On submit, calls mutation hook (<code
+                            >useCreateCabin</code
+                        >
+                        or <code>useEditCabin</code>) to send data to backend.
+                    </li>
+                    <li>Handles loading and error states.</li>
+                </ul>
+            </li>
+            <li>
+                <strong>Usage</strong>:
+                <ul>
+                    <li>
+                        Used directly in modals for creating or editing cabins.
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <strong>Key Snippet</strong>:
+                <pre><code class="language-jsx">const { register, handleSubmit } = useForm({ defaultValues });
+function onSubmit(data) {
+    if (cabinToEdit) {
+        editCabin({ ...data, id: cabinToEdit.id });
+    } else {
+        createCabin(data);
+    }
+}
+</code></pre>
+            </li>
+        </ul>
+
+        <hr />
+
+        <h2>2. Hooks</h2>
+
+        <h3>2.1 <code>useCabins.js</code></h3>
+        <ul>
+            <li>
+                <strong>Purpose</strong>: Fetches the list of cabins from
+                backend.
+            </li>
+            <li>
+                <strong>Implementation</strong>:
+                <ul>
+                    <li>Uses <code>useQuery</code> from React Query.</li>
+                    <li>
+                        Calls <code>getCabins</code> API service to fetch data
+                        from Supabase.
+                    </li>
+                    <li>Handles loading and error states.</li>
+                </ul>
+            </li>
+            <li>
+                <strong>Code Snippet</strong>:
+                <pre><code class="language-js">export function useCabins() {
+    return useQuery(['cabins'], getCabins);
+}
+</code></pre>
+            </li>
+            <li>
+                <strong>Dependencies</strong>: <code>getCabins</code> from
+                <code>apiCabins.js</code>.
+            </li>
+        </ul>
+
+        <hr />
+
+        <h3>2.2 <code>useCreateCabin.js</code></h3>
+        <ul>
+            <li><strong>Purpose</strong>: Handles cabin creation mutation.</li>
+            <li>
+                <strong>Implementation</strong>:
+                <ul>
+                    <li>
+                        Uses <code>useMutation</code> from React Query for API
+                        call.
+                    </li>
+                    <li>
+                        Calls <code>createEditCabin</code> function from API
+                        with no id.
+                    </li>
+                    <li>
+                        On success, invalidates cabins query to refetch updated
+                        list.
+                    </li>
+                    <li>Shows success/error toast notifications.</li>
+                </ul>
+            </li>
+            <li>
+                <strong>Code Snippet</strong>:
+                <pre><code class="language-js">const { mutate: createCabin } = useMutation(createEditCabin, {
+    onSuccess: () =&gt; {
+        toast.success("New cabin created successfully");
+        queryClient.invalidateQueries(['cabins']);
+    },
+    onError: (err) =&gt; toast.error(err.message),
+});
+</code></pre>
+            </li>
+        </ul>
+
+        <hr />
+
+        <h3>2.3 <code>useEditCabin.js</code></h3>
+        <ul>
+            <li><strong>Purpose</strong>: Manages cabin editing mutation.</li>
+            <li>
+                <strong>Implementation</strong>:
+                <ul>
+                    <li>
+                        Similar to <code>useCreateCabin</code> but calls
+                        <code>createEditCabin</code> with existing cabin ID.
+                    </li>
+                    <li>Invalidates cabin cache on success.</li>
+                </ul>
+            </li>
+            <li>
+                <strong>Usage</strong>: Called by the edit form component when
+                updating cabin data.
+            </li>
+        </ul>
+
+        <hr />
+
+        <h3>2.4 <code>useDeleteCabin.js</code></h3>
+        <ul>
+            <li><strong>Purpose</strong>: Manages cabin deletion mutation.</li>
+            <li>
+                <strong>Implementation</strong>:
+                <ul>
+                    <li>
+                        Uses <code>useMutation</code> from React Query to call
+                        <code>deleteCabin</code> API.
+                    </li>
+                    <li>Invalidates cabins query on success for fresh data.</li>
+                    <li>Shows notifications for success/error.</li>
+                </ul>
+            </li>
+            <li>
+                <strong>Example Usage</strong>:
+                <pre><code class="language-js">const { mutate: deleteCabin } = useDeleteCabin();
+deleteCabin(cabinId);
+</code></pre>
+            </li>
+        </ul>
+
+        <hr />
+
+        <h2>3. Services - API Interaction with Supabase</h2>
+
+        <h3>3.1 <code>apiCabins.js</code></h3>
+        <ul>
+            <li>
+                <strong>Functions</strong>:
+                <ul>
+                    <li><code>getCabins</code>: Fetch all cabins.</li>
+                    <li>
+                        <code>deleteCabin(id)</code>: Deletes cabin by
+                        <code>id</code>.
+                    </li>
+                    <li>
+                        <code>createEditCabin(newCabin, id?)</code>: Either
+                        creates or updates a cabin.
+                        <ul>
+                            <li>Handles image upload to Supabase storage.</li>
+                            <li>
+                                If image is new (not from Supabase URL), uploads
+                                it separately.
+                            </li>
+                            <li>
+                                If image upload fails after cabin insertion,
+                                rolls back by deleting cabin row.
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <strong>Key Implementation Details</strong>:
+                <pre><code class="language-js">export async function createEditCabin(newCabin, id) {
+    const hasImagePath = newCabin?.image?.startsWith(SUPABASE_URL);
+    const imageName = `${Math.random()}-${newCabin?.image?.name}`.replace(/\//g, "");
+    const imagePath = hasImagePath ? newCabin.image : `${SUPABASE_URL}/storage/v1/object/public/cabin-images/${imageName}`;
+
+    let query = supabase.from("cabins");
+    if (!id) query = query.insert([{ ...newCabin, image: imagePath }]);
+    if (id) query = query.update({ ...newCabin, image: imagePath }).eq("id", id);
+
+    const { data, error } = await query.select().single();
+    if (error) throw new Error("Cabin could not be created");
+
+    if (!hasImagePath) {
+        const { error: storageError } = await supabase.storage.from("cabin-images").upload(imageName, newCabin.image);
+        if (storageError) {
+            await supabase.from("cabins").delete().eq("id", data.id);
+            throw new Error("Cabin image could not be uploaded");
+        }
+    }
+    return data;
+}
+</code></pre>
+            </li>
+            <li>
+                <strong>Considerations</strong>:
+                <ul>
+                    <li>
+                        Ensures atomic operation for cabin creation and image
+                        storage.
+                    </li>
+                    <li>Provides meaningful error messages for UI feedback.</li>
+                </ul>
+            </li>
+            <li>
+                <strong>Dependencies</strong>:
+                <ul>
+                    <li>
+                        <code>supabase</code> client from
+                        <code>supabase.js</code>.
+                    </li>
+                    <li>
+                        <code>SUPABASE_URL</code> constant for constructing
+                        storage URLs.
+                    </li>
+                </ul>
+            </li>
+        </ul>
+
+        <hr />
+
+        <h2>4. Summary of Data Flow and Interaction</h2>
+
+        <table
+            border="1"
+            cellpadding="6"
+            cellspacing="0"
+            style="border-collapse: collapse"
+        >
+            <thead>
+                <tr>
+                    <th style="text-align: left">Step</th>
+                    <th style="text-align: left">Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>User visits cabins page (<code>Cabins.jsx</code>)</td>
+                    <td>
+                        Page rendered, <code>CabinTable</code> fetches cabin
+                        list with <code>useCabins</code> hook
+                    </td>
+                </tr>
+                <tr>
+                    <td>Cabin list displayed</td>
+                    <td>
+                        Data filtered/sorted, subdivided into
+                        <code>CabinRow</code> components
+                    </td>
+                </tr>
+                <tr>
+                    <td>User adds a cabin</td>
+                    <td>
+                        Opens modal from <code>AddCabin</code>, submits
+                        <code>CreateCabinForm</code>
+                    </td>
+                </tr>
+                <tr>
+                    <td>Creation mutation</td>
+                    <td>
+                        <code>useCreateCabin</code> calls
+                        <code>createEditCabin</code> API, uploads image if new,
+                        updates React Query cache
+                    </td>
+                </tr>
+                <tr>
+                    <td>User edits a cabin</td>
+                    <td>
+                        Modal form (<code>CreateCabinForm</code>) loaded with
+                        current data, updates on submit
+                    </td>
+                </tr>
+                <tr>
+                    <td>Edit mutation</td>
+                    <td>
+                        <code>useEditCabin</code> calls
+                        <code>createEditCabin</code> with cabin id to update,
+                        triggers cache invalidation
+                    </td>
+                </tr>
+                <tr>
+                    <td>User duplicates cabin</td>
+                    <td>
+                        <code>CabinRow</code> calls
+                        <code>useCreateCabin</code> to create clone with
+                        modified name
+                    </td>
+                </tr>
+                <tr>
+                    <td>User deletes cabin</td>
+                    <td>
+                        <code>CabinRow</code> confirms deletion, calls
+                        <code>useDeleteCabin</code> to delete cabin record
+                    </td>
+                </tr>
+                <tr>
+                    <td>Deletion mutation</td>
+                    <td>
+                        Calls <code>deleteCabin</code> API, cache invalidated
+                        for UI refresh
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <hr />
+
+        <h2>5. Usage Considerations &amp; Developer Tips</h2>
+        <ul>
+            <li>
+                <strong>Image Upload</strong>:
+                <ul>
+                    <li>
+                        Images are stored in Supabase Storage under
+                        <code>cabin-images</code> bucket.
+                    </li>
+                    <li>
+                        Keep in mind file size limits and types when uploading
+                        images.
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <strong>Cache Invalidation</strong>:
+                <ul>
+                    <li>
+                        All mutations must invalidate the
+                        <code>cabins</code> React Query cache to keep UI data
+                        consistent.
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <strong>Error Handling</strong>:
+                <ul>
+                    <li>Toast notifications provide helpful user feedback.</li>
+                    <li>
+                        Backend errors logged to console for developer
+                        diagnosis.
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <strong>Forms</strong>:
+                <ul>
+                    <li>
+                        <code>react-hook-form</code> provides robust validation
+                        and performance for cabin creation/editing forms.
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <strong>API Security</strong>:
+                <ul>
+                    <li>
+                        Supabase keys stored in client code for dev but consider
+                        server-side or environment variable management for
+                        production.
+                    </li>
+                </ul>
+            </li>
+        </ul>
+
+        <hr />
+
+        <h1>Conclusion</h1>
+
+        <p>
+            The cabin management system in this React application is a
+            comprehensive CRUD setup allowing users to efficiently manage cabin
+            resources of the hotel. It leverages React Query for data sync and
+            state management, Supabase for backend storage and authentication,
+            and styled-components for UI consistency.
+        </p>
+        <p>
+            All actionable operations (create, edit, duplicate, delete) are
+            equipped with user-friendly feedback and modals, while tables
+            provide filtering and sorting for effective data browsing.
+        </p>
+        <p>
+            If you want detailed code examples or instructions on integrating
+            any part of this cabin management module, please let me know!
+        </p>
+    </body>
+</html>

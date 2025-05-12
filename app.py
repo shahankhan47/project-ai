@@ -44,7 +44,7 @@ from fastapi import Security, Depends, status
 from fastapi.security.api_key import APIKeyHeader
 from starlette.responses import JSONResponse
 import httpx
-
+import re
 
 
 #$~ Configs ~$############################################################################################################################
@@ -199,6 +199,30 @@ async def add_codebase( file: UploadFile, project_id: str, background_tasks: Bac
 # Iterate through each file in zip and call Open AI to generate the summary 
 
 #`````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````
+def extract_first_json(text):
+    """Extracts the first JSON object found in a string (non-greedy)."""
+    match = re.search(r'\{(?:[^{}]|(?R))*\}', text)
+    if match:
+        return match.group(0)
+    return None
+
+def safe_json_loads(possible_json):
+    """Try to load JSON, and extract if embedded or duplicated."""
+    try:
+        return json.loads(possible_json)
+    except Exception:
+        extracted = extract_first_json(possible_json)
+        if extracted:
+            try:
+                return json.loads(extracted)
+            except Exception:
+                pass
+        # As a last resort:
+        print("Failed to parse summary as JSON:\n", possible_json)
+        raise
+
+
+
 def should_ignore_path(path, ignore_patterns=DEFAULT_IGNORE_PATTERNS):
     path_parts = path.split(os.sep)
     for pattern in ignore_patterns:
@@ -206,52 +230,75 @@ def should_ignore_path(path, ignore_patterns=DEFAULT_IGNORE_PATTERNS):
             return True
     return False
 
-async def process_and_post_summary(extract_dir: str, project_id: str, project_details: str, file_source : str, commit_id : str ):
+
+async def process_file(file_path, extract_dir):
+    relative_path = os.path.relpath(file_path, extract_dir)
+
+    if should_ignore_path(relative_path):
+        return None, None  # Skip ignored files
+
+    if os.path.splitext(file_path)[1].lower() in TEXT_FILE_EXTENSIONS:
+        file_path_1, content, summary = await summarize_file(file_path)
+        print(f'Summary succeeded for {file_path}')
+        summary_dict = safe_json_loads(summary)
+
+        qualitative_score = summary_dict.get('qualitative_score', 0)
+        summary = summary_dict.get('summary', '')
+
+        if summary:
+            file_name = os.path.basename(file_path)
+            context_summary = {
+                'score': qualitative_score,
+                'text': f"file name is {file_name}, \nfile path is: {file_path_1}, \nfilesummary is: {summary}"
+            }
+            full_summary = [file_name, file_path, content, summary]
+            return context_summary, full_summary
+
+    return None, None
+
+async def process_and_post_summary(extract_dir: str, project_id: str, project_details: str, file_source: str, commit_id: str):
     try:
         # Status update in db
-        await update_status_in_db(emails = project_details["emails"], project_id=project_id, project_description = project_details["project_description"],   project_name = project_details["project_name"],  status = "Summary being generated" , summary ="", executive_summary= "", project_diagrams= "", file_source = file_source, commit_id = commit_id )
-        summaries: list[str] = []
+        await update_status_in_db(emails=project_details["emails"], project_id=project_id, 
+                                project_description=project_details["project_description"],
+                                project_name=project_details["project_name"],
+                                status="Summary being generated", summary="", executive_summary="", 
+                                project_diagrams="", file_source=file_source, commit_id=commit_id)
 
-        async def gather_files():
+        # Gather all file paths first
+        all_file_paths = []
+        for root, dirs, files in os.walk(extract_dir):
+            dirs[:] = [d for d in dirs if not should_ignore_path(os.path.join(root, d), DEFAULT_IGNORE_PATTERNS)]
+            
+            for name in files:
+                file_path = os.path.join(root, name)
+                if os.path.splitext(file_path)[1].lower() in TEXT_FILE_EXTENSIONS and not should_ignore_path(file_path):
+                    all_file_paths.append(file_path)
+        
+        # Process all files in parallel
+        async def process_files_in_parallel(file_paths, batch_size=10):
             context_summaries = []
             full_summaries = []
-
-            for root, dirs, files in os.walk(extract_dir):
-                dirs[:] = [d for d in dirs if not should_ignore_path(os.path.join(root, d), DEFAULT_IGNORE_PATTERNS)]
-
-                for name in files:
-                    file_path = os.path.join(root, name)
-                    relative_path = os.path.relpath(file_path, extract_dir)
-                    
-                    # Check if the file should be ignored
-                    if should_ignore_path(relative_path):
-                        continue
-                    
-                    if os.path.splitext(name)[1].lower() in TEXT_FILE_EXTENSIONS:               
-                        file_path_1, content, summary  = await summarize_file(file_path)
-                        print(f'Summary succeded for {file_path}')
-                        summary_dict = json.loads(summary)
-                        qualitative_score = summary_dict.get('qualitative_score', 0)
-                        summary = summary_dict.get('summary', '')
-
-                        if summary:
-                            file_name = os.path.basename(file_path)
-                            context_summary = {
-                                'score': qualitative_score,
-                                'text': f"file name is {file_name}, \nfile path is: {file_path_1}, \nfilesummary is: {summary}"
-                            }
-                            full_summary = [file_name, file_path, content, summary]
-                            context_summaries.append(context_summary)
-                            full_summaries.append(full_summary)
-
+            
+            # Process files in batches to avoid overwhelming the system
+            for i in range(0, len(file_paths), batch_size):
+                batch = file_paths[i:i+batch_size]
+                tasks = [process_file(file_path, extract_dir) for file_path in batch]
+                results = await asyncio.gather(*tasks)
+                
+                for context_summary, full_summary in results:
+                    if context_summary and full_summary:
+                        context_summaries.append(context_summary)
+                        full_summaries.append(full_summary)
+            
             # Sort context summaries by score in descending order
             context_summaries.sort(key=lambda x: x['score'], reverse=True)
             combined_summary = '\n\n\n'.join([item['text'] for item in context_summaries])
-
-            return combined_summary, full_summaries 
-
-        context_summaries, full_summaries = await gather_files()
+            
+            return combined_summary, full_summaries
         
+        context_summaries, full_summaries = await process_files_in_parallel(all_file_paths)
+
         ###
         if context_summaries:
             combined_summary = anthropic_truncator(text =  context_summaries)
@@ -264,7 +311,7 @@ async def process_and_post_summary(extract_dir: str, project_id: str, project_de
             diagrams = await generate_project_diagrams(project_id =project_id,summary= combined_summary )
 
             await store_summary_in_db(emails= project_details["emails"], project_id= project_id, summary= combined_summary, status="Stage 1 Completed", executive_summary = executive_summary, project_diagrams = diagrams)
-           
+
             email_summary(combined_summary, project_details["emails"], project_id, project_details["project_name"])
             print("email sent")
         else:
@@ -275,8 +322,8 @@ async def process_and_post_summary(extract_dir: str, project_id: str, project_de
         error_msg = f"Error in process_and_post_summary: {str(e)}"
         print(error_msg)
         await update_status_in_db(emails = project_details["emails"], project_id=project_id, project_description = project_details["project_description"],   project_name = project_details["project_name"], status = error_msg,  summary = None, executive_summary = None,  project_diagrams = None,  file_source = file_source, commit_id = commit_id)
-    
-    
+
+
     finally:
             shutil.rmtree(extract_dir)
 
@@ -891,6 +938,54 @@ async def update_codebase( file: UploadFile, project_id: str,  file_source :str 
 # Iterate through each file in zip and call Open AI to generate the summary 
 
 #`````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````````
+def extract_first_json(text):
+    """Extracts the first JSON object found in a string (non-greedy)."""
+    match = re.search(r'\{(?:[^{}]|(?R))*\}', text)
+    if match:
+        return match.group(0)
+    return None
+
+def safe_json_loads(possible_json):
+    """Try to load JSON, and extract if embedded or duplicated."""
+    try:
+        return json.loads(possible_json)
+    except Exception:
+        extracted = extract_first_json(possible_json)
+        if extracted:
+            try:
+                return json.loads(extracted)
+            except Exception:
+                pass
+        # As a last resort:
+        print("Failed to parse summary as JSON:\n", possible_json)
+        raise
+
+
+async def process_file(file_path, extract_dir):
+    relative_path = os.path.relpath(file_path, extract_dir)
+
+    if should_ignore_path(relative_path):
+        return None, None  # Skip ignored files
+
+    if os.path.splitext(file_path)[1].lower() in TEXT_FILE_EXTENSIONS:
+        file_path_1, content, summary = await summarize_file(file_path)
+        print(f'Summary succeeded for {file_path}')
+        summary_dict = safe_json_loads(summary)
+
+        qualitative_score = summary_dict.get('qualitative_score', 0)
+        summary = summary_dict.get('summary', '')
+
+        if summary:
+            file_name = os.path.basename(file_path)
+            context_summary = {
+                'score': qualitative_score,
+                'text': f"file name is {file_name}, \nfile path is: {file_path_1}, \nfilesummary is: {summary}"
+            }
+            full_summary = [file_name, file_path, content, summary]
+            return context_summary, full_summary
+
+    return None, None
+
 def should_ignore_path(path, ignore_patterns=DEFAULT_IGNORE_PATTERNS):
     path_parts = path.split(os.sep)
     for pattern in ignore_patterns:
@@ -900,76 +995,75 @@ def should_ignore_path(path, ignore_patterns=DEFAULT_IGNORE_PATTERNS):
 
 async def update_process_and_post_summary(extract_dir: str, project_id: str, project_details: str, file_source :str, commit_id :str):
     try:
-        # Status update in db
-        await update_status_in_db(emails = project_details["emails"], project_id=project_id, project_description = project_details["project_description"],   project_name = project_details["project_name"],  status = "Updated Summary being generated" , summary = None, executive_summary= None, project_diagrams=  None, file_source = file_source, commit_id = commit_id)
-        summaries: list[str] = []
+        await update_status_in_db(emails=project_details["emails"], project_id=project_id, 
+                                  project_description=project_details["project_description"],
+                                  project_name=project_details["project_name"],
+                                  status="Updated Summary being generated", summary=None, executive_summary=None, 
+                                  project_diagrams=None, file_source=file_source, commit_id=commit_id)
 
-        async def gather_files():
+        # Gather all file paths first
+        all_file_paths = []
+        for root, dirs, files in os.walk(extract_dir):
+            dirs[:] = [d for d in dirs if not should_ignore_path(os.path.join(root, d), DEFAULT_IGNORE_PATTERNS)]
+
+            for name in files:
+                file_path = os.path.join(root, name)
+                if os.path.splitext(file_path)[1].lower() in TEXT_FILE_EXTENSIONS and not should_ignore_path(file_path):
+                    all_file_paths.append(file_path)
+
+        # Process all files in parallel
+        async def process_files_in_parallel(file_paths, batch_size=10):
             context_summaries = []
             full_summaries = []
 
-            for root, dirs, files in os.walk(extract_dir):
-                dirs[:] = [d for d in dirs if not should_ignore_path(os.path.join(root, d), DEFAULT_IGNORE_PATTERNS)]
+            for i in range(0, len(file_paths), batch_size):
+                batch = file_paths[i:i+batch_size]
+                tasks = [process_file(file_path, extract_dir) for file_path in batch]
+                results = await asyncio.gather(*tasks)
 
-                for name in files:
-                    file_path = os.path.join(root, name)
-                    relative_path = os.path.relpath(file_path, extract_dir)
-                    
-                    # Check if the file should be ignored
-                    if should_ignore_path(relative_path):
-                        continue
-                    
-                    if os.path.splitext(name)[1].lower() in TEXT_FILE_EXTENSIONS:               
-                        file_path_1, content, summary  = await summarize_file(file_path)
-                        print(f'Summary succeded for {file_path}')
-                        summary_dict = json.loads(summary)
-                        qualitative_score = summary_dict.get('qualitative_score', 0)
-                        summary = summary_dict.get('summary', '')
+                for context_summary, full_summary in results:
+                    if context_summary and full_summary:
+                        context_summaries.append(context_summary)
+                        full_summaries.append(full_summary)
 
-                        if summary:
-                            file_name = os.path.basename(file_path)
-                            context_summary = {
-                                'score': qualitative_score,
-                                'text': f"file name is {file_name}, \nfile path is: {file_path_1}, \nfilesummary is: {summary}"
-                            }
-                            full_summary = [file_name, file_path, content, summary]
-                            context_summaries.append(context_summary)
-                            full_summaries.append(full_summary)
-
-            # Sort context summaries by score in descending order
             context_summaries.sort(key=lambda x: x['score'], reverse=True)
             combined_summary = '\n\n\n'.join([item['text'] for item in context_summaries])
 
-            return combined_summary, full_summaries 
+            return combined_summary, full_summaries
 
-        context_summaries, full_summaries = await gather_files()
-        
-        ###
+        context_summaries, full_summaries = await process_files_in_parallel(all_file_paths)
+
         if context_summaries:
-            combined_summary = anthropic_truncator(text = context_summaries)
-            
-            await update_vectors(project_id= project_id, full_summaries = full_summaries , action = "update")
+            combined_summary = anthropic_truncator(text=context_summaries)
 
+            await update_vectors(project_id=project_id, full_summaries=full_summaries, action="update")
             executive_summary = await generate_executive_summary(combined_summary)
+            diagrams = await generate_project_diagrams(project_id=project_id, summary=combined_summary)
 
-            diagrams = await generate_project_diagrams(project_id =project_id,summary= combined_summary )
+            await store_summary_in_db(emails=project_details["emails"], project_id=project_id, summary=combined_summary,
+                                      status="Updated", executive_summary=executive_summary, project_diagrams=diagrams)
 
-            await store_summary_in_db(emails= project_details["emails"], project_id= project_id, summary= combined_summary, status="Updated ", executive_summary = executive_summary, project_diagrams = diagrams)
-           
             email_summary(combined_summary, project_details["emails"], project_id, project_details["project_name"])
             print("email sent")
         else:
-            await update_status_in_db(emails = project_details["emails"], project_id=project_id, project_description = project_details["project_description"],   project_name = project_details["project_name"], status=  "codebase update failed, Contact: sai_002@harmonyengine.ai ", summary = None, executive_summary= None, project_diagrams = None, file_source = file_source, commit_id = commit_id)
+            await update_status_in_db(emails=project_details["emails"], project_id=project_id, 
+                                      project_description=project_details["project_description"],
+                                      project_name=project_details["project_name"],
+                                      status="codebase update failed, Contact: sai_002@harmonyengine.ai", 
+                                      summary=None, executive_summary=None, project_diagrams=None, 
+                                      file_source=file_source, commit_id=commit_id)
             print("no files were found")
-            pass
     except Exception as e:
         error_msg = f"Error in process_and_post_summary: {str(e)}"
         print(error_msg)
-        await update_status_in_db(emails = project_details["emails"], project_id=project_id, project_description = project_details["project_description"],   project_name = project_details["project_name"], status = error_msg,  summary = None, executive_summary = None,  project_diagrams = None, file_source = file_source, commit_id = commit_id)
-    
-    
+        await update_status_in_db(emails=project_details["emails"], project_id=project_id, 
+                                  project_description=project_details["project_description"],
+                                  project_name=project_details["project_name"],
+                                  status=error_msg, summary=None, executive_summary=None, project_diagrams=None, 
+                                  file_source=file_source, commit_id=commit_id)
+
     finally:
-            shutil.rmtree(extract_dir)
+        shutil.rmtree(extract_dir)
 
 
 #$~ API 21 ~$############################################################################################################################
